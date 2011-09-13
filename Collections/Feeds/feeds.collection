@@ -1,0 +1,14 @@
+{
+    "title":"Feeds",
+    "desc":"A collection of socially shared items from various networks.",
+    "run":"node feeds.js",
+    "status":"stable",
+    "handle":"feeds",
+    "provides":["item"],
+    "mongoCollections": ["item","response"],
+    "events":[["recent/foursquare","/events"]
+		,["timeline/twitter","/events"]
+		,["related/twitter","/events"]
+		,["home/facebook","/events"]
+		]
+}
