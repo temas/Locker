@@ -24,7 +24,7 @@ exports.clear = function(callback) {
 exports.getTotalItems = function(callback) {
     itemCollection.count(callback);
 }
-exports.getTotalEncounters = function(callback) {
+exports.getTotalResponses = function(callback) {
     responseCollection.count(callback);
 }
 
@@ -45,10 +45,10 @@ exports.getItems = function(arg, cbEach, cbDone) {
     findWrap(f,arg,itemCollection,cbEach,cbDone);
 }
 
-// either gets a single encounter arg:{id:...,network:...,link:...} or multiple from just a link arg:{link:...} and can paginate all arg:{start:10,limit:10}
-exports.getEncounters = function(arg, cbEach, cbDone) {
+// either gets a single response arg:{id:...,network:...,link:...} or multiple from just a link arg:{link:...} and can paginate all arg:{start:10,limit:10}
+exports.getResponses = function(arg, cbEach, cbDone) {
     var f = (arg.link)?{link:arg.link}:{}; // link search
-    if(arg.id) f = {id:arg.network+':'+arg.id+':'+arg.link}; // individual encounter search
+    if(arg.id) f = {id:arg.network+':'+arg.id+':'+arg.link}; // individual response search
     delete arg.id;
     delete arg.network;
     delete arg.link;
@@ -81,15 +81,15 @@ exports.updateLinkAt = function(link, at, callback) {
     itemCollection.findAndModify({"link":link}, [['_id', 'asc']], {$set:{"at":at}}, {safe:true, upser:false, new:false}, callback);
 }
 
-// insert new encounter, replace any existing
+// insert new response, replace any existing
 // {id:"123456632451234", network:"foo", at:"123412341234", from:"Me", fromID:"1234", orig:"http://bit.ly/foo", link:"http://foo.com/bar", via:{...}}
-exports.addEncounter = function(encounter, callback) {
-    // create unique id as encounter.network+':'+encounter.id+':'+link, sha1 these or something?
-//    logger.debug("addEncounter: "+JSON.stringify(encounter));
-    var _hash = encounter.network + ":" + encounter.id + ":" + encounter.link;
-    encounter["_hash"] = _hash;
+exports.addResponse = function(response, callback) {
+    // create unique id as response.network+':'+response.id+':'+link, sha1 these or something?
+//    logger.debug("addResponse: "+JSON.stringify(response));
+    var _hash = response.network + ":" + response.id + ":" + response.link;
+    response["_hash"] = _hash;
     var options = {safe:true, upsert:true, new: true};
-    responseCollection.findAndModify({"_hash":_hash}, [['_id','asc']], {$set:encounter}, options, function(err, doc) {
+    responseCollection.findAndModify({"_hash":_hash}, [['_id','asc']], {$set:response}, options, function(err, doc) {
         delete doc["_hash"];
         callback(err, doc);
     });

@@ -3,32 +3,23 @@ var async = require('async');
 var logger = require(__dirname + "/../../Common/node/logger").logger;
 var lutil = require('lutil');
 
-var dataStore, locker, search;
+var dataStore, locker;
+
 // internally we need these for happy fun stuff
-exports.init = function(l, dStore, s){
+exports.init = function(l, dStore){
     dataStore = dStore;
     locker = l;
-    search = s;
 }
 
-// TODO background re-scan every tweet for replies and retweets
-// undocumented api: https://api.twitter.com/1/related_results/show/109343528747925504.json?include_entities=1
-
 // manually walk and reindex all possible link sources
-exports.reIndex = function(locker) {
-    search.resetIndex();
+exports.update = function(locker, callback) {
     dataStore.clear(function(){
+        callback();
         locker.providers(['link/facebook', 'status/twitter'], function(err, services) {
             if (!services) return;
             services.forEach(function(svc) {
                 if(svc.provides.indexOf('link/facebook') >= 0) {
-                    getLinks(getEncounterFB, locker.lockerBase + '/Me/' + svc.id + '/getCurrent/newsfeed', function() {
-                        getLinks(getEncounterFB, locker.lockerBase + '/Me/' + svc.id + '/getCurrent/wall', function() {
-                            getLinks(getEncounterFB, locker.lockerBase + '/Me/' + svc.id + '/getCurrent/home', function() {
-                                console.error('facebook done!');
-                            });
-                        });
-                    });
+                    getLinks(getEncounterFB, locker.lockerBase + '/Me/' + svc.id + '/getCurrent/newsfeed');
                 } else if(svc.provides.indexOf('status/twitter') >= 0) {
                     getLinks(getEncounterTwitter, locker.lockerBase + '/Me/' + svc.id + '/getCurrent/home_timeline', function() {
                         getLinks(getEncounterTwitter, locker.lockerBase + '/Me/' + svc.id + '/getCurrent/timeline', function() {
@@ -37,7 +28,7 @@ exports.reIndex = function(locker) {
                     });
                 }
             });
-        });        
+        });
     });
 }
 

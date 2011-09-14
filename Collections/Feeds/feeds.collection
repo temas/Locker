@@ -6,7 +6,7 @@
     "handle":"feeds",
     "provides":["item"],
     "mongoCollections": ["item","response"],
-    "events":[["recent/foursquare","/events"]
+    "events":[["recents/foursquare","/events"]
 		,["timeline/twitter","/events"]
 		,["related/twitter","/events"]
 		,["home/facebook","/events"]

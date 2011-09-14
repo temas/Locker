@@ -7,7 +7,7 @@
 *
 */
 
-// merge links from connectors
+// merge newsfeed style data and any gather any responses
 
 var fs = require('fs'),
     url = require('url'),
@@ -16,8 +16,7 @@ var fs = require('fs'),
 var async = require("async");
     
 var dataIn = require('./dataIn'); // for processing incoming twitter/facebook/etc data types
-var dataStore = require("./dataStore"); // storage/retreival of raw links and encounters
-var search = require("./search"); // our indexing and query magic
+var dataStore = require("./dataStore"); // storage/retreival of raw items and responses
 
 var lockerInfo;
 var express = require('express'),
@@ -31,7 +30,7 @@ app.get('/', function(req, res) {
         'Content-Type': 'text/html'
     });
     dataStore.getTotalItems(function(err, countInfo) {
-        res.write('<html><p>Found '+ countInfo +' links</p></html>');
+        res.write('<html><p>Found '+ countInfo +' items</p></html>');
         res.end();
     });
 });
@@ -49,64 +48,10 @@ app.get('/state', function(req, res) {
 });
 
 
-app.get('/search', function(req, res) {
-    if (!req.query.q) {
-        res.send([]);
-        return;
-    }
-    search.search(req.query["q"], function(err,results) {
-        if(err || !results || results.length == 0) return res.send([]);
-        var fullResults = [];
-        async.forEach(results, function(item, callback) {
-            dataStore.getFullLink(item._id, function(link) {
-                if (!link) {
-                    console.error("skipping not found: "+item._id);
-                    return callback();
-                }
-                link.at = item.at;
-                link.encounters = [];
-                dataStore.getEncounters({"link":link.link}, function(encounter) {
-                    link.encounters.push(encounter);
-                }, function() {
-                    fullResults.push(link);
-                    callback();
-                });
-            });
-        }, function() {
-            // Done
-            var sorted = fullResults.sort(function(lh, rh) {
-                return rh.at - lh.at;
-            });
-            res.send(sorted);
-        });
-    });
-});
-
-app.get('/reindex', function(req, res) {
-    dataIn.reIndex(locker);
-    res.writeHead(200);
-    res.end('Extra mince!');
-});
-
-// just add embedly key and return result: http://embed.ly/docs/endpoints/1/oembed
-// TODO: should do smart caching
-app.get('/embed', function(req, res) {
-    // TODO: need to load from apiKeys the right way
-    var embedly = url.parse("http://api.embed.ly/1/oembed");
-    embedly.query = req.query;
-    embedly.query.key = "4f95c324c9dc11e083104040d3dc5c07";
-    request.get({uri:url.format(embedly)},function(err,resp,body){
-        var js;
-        try{
-            if(err) throw err;
-            js = JSON.parse(body);
-        }catch(E){
-            res.writeHead(500, {'Content-Type': 'text/plain'});
-            res.end(err);
-            return;
-        }
-        res.writeHead(200, {'Content-Type': 'application/json'});
-        res.end(JSON.stringify(js));
+app.get('/update', function(req, res) {
+    dataIn.update(locker, function(){
+        res.writeHead(200);
+        res.end('Extra mince!');        
     });
 });
 
@@ -130,36 +75,32 @@ function genericApi(name,f)
     app.get(name,function(req,res){
         var results = [];
         f(req.query,function(item){results.push(item);},function(err){
-            if(err)
-            {
-                res.writeHead(500, {'Content-Type': 'text/plain'});
-                res.end(err);
-            }else{
-                res.writeHead(200, {'Content-Type': 'application/json'});
-                res.end(JSON.stringify(results));
-            }
+            if(err) return res.send(err,500);
+            res.send(results);
         });
     });   
 }
 
-// expose way to get raw links and encounters
-app.get('/getLinksFull', function(req, res) {
+// expose way to get items and responses in one
+app.get('/getItemsFull', function(req, res) {
     var fullResults = [];
     var results = [];
     var options = {sort:{"at":-1}};
     if (req.query.limit) {
         options.limit = parseInt(req.query.limit);
+    }else{
+        options.limit = 100;
     }
     if (req.query.offset) {
         options.offset = parseInt(req.query.offset);
     }
-    dataStore.getLinks(options, function(item) { results.push(item); }, function(err) { 
-        async.forEach(results, function(link, callback) {
-            link.encounters = [];
-            dataStore.getEncounters({"link":link.link}, function(encounter) {
-                link.encounters.push(encounter);
+    dataStore.getItems(options, function(item) { results.push(item); }, function(err) { 
+        async.forEach(results, function(item, callback) {
+            item.responses = [];
+            dataStore.getResponses({"item":item.idr}, function(response) {
+                item.responses.push(response);
             }, function() {
-                fullResults.push(link);
+                fullResults.push(item);
                 callback();
             });
         }, function() {
@@ -167,8 +108,8 @@ app.get('/getLinksFull', function(req, res) {
         });
     });
 });
-genericApi('/getItems', dataStore.getLinks);
-genericApi('/getResponses',dataStore.getEncounters);
+genericApi('/getItems', dataStore.getItems);
+genericApi('/getResponses',dataStore.getResponses);
 
 // Process the startup JSON object
 process.stdin.resume();
@@ -185,8 +126,7 @@ process.stdin.on('data', function(data) {
     locker.connectToMongo(function(mongo) {
         // initialize all our libs
         dataStore.init(mongo.collections.item,mongo.collections.response);
-        search.init(dataStore);
-        dataIn.init(locker, dataStore, search);
+        dataIn.init(locker, dataStore);
         app.listen(lockerInfo.port, 'localhost', function() {
             process.stdout.write(data);
         });
