@@ -329,7 +329,7 @@ function deleteData (collection, mongoId, deleteIds, info, eventType, callback) 
     var q = async.queue(function(id, cb) {
         var newEvent = {obj : {source : eventType, type: 'delete', data : {}}};
         newEvent.obj.data[mongoId] = id;
-        newEvent.fromService = "synclet/" + info.id;
+        newEvent.fromService = info.id;
         levents.fireEvent(eventType, newEvent.fromService, newEvent.obj.type, newEvent.obj);
         datastore.removeObject(collection, id, {timeStampe: Date.now()}, cb);
     }, 5);
@@ -348,7 +348,7 @@ function addData (collection, mongoId, data, info, eventType, callback) {
                 return;
             }
             var newEvent = {obj : {source : collection, type: object.type, data: object.obj}};
-            newEvent.fromService = "synclet/" + info.id;
+            newEvent.fromService = info.id;
             if (object.type === 'delete') {
                 datastore.removeObject(collection, object.obj[mongoId], {timeStamp: object.timestamp}, cb);
                 levents.fireEvent(eventType, newEvent.fromService, newEvent.obj.type, newEvent.obj);
