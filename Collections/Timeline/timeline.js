@@ -64,8 +64,7 @@ app.post('/events', function(req, res) {
     }
 
     // handle asyncadilly
-//    dataIn.processEvent(req.body);
-    console.error("FEEDEVE\t"+JSON.stringify(req.body));
+    dataIn.processEvent(req.body);
     res.writeHead(200);
     res.end('ok');
 });

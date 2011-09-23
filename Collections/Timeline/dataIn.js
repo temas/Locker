@@ -2,6 +2,7 @@ var request = require('request');
 var async = require('async');
 var logger = require(__dirname + "/../../Common/node/logger").logger;
 var lutil = require('lutil');
+var url = require('url');
 
 var dataStore, locker;
 
@@ -15,155 +16,96 @@ exports.init = function(l, dStore){
 exports.update = function(locker, callback) {
     dataStore.clear(function(){
         callback();
-        locker.providers(['link/facebook', 'status/twitter'], function(err, services) {
+        locker.providers(['link/facebook', 'status/twitter', 'checkin/foursquare'], function(err, services) {
             if (!services) return;
             services.forEach(function(svc) {
                 if(svc.provides.indexOf('link/facebook') >= 0) {
-                    getLinks(getEncounterFB, locker.lockerBase + '/Me/' + svc.id + '/getCurrent/newsfeed');
+                    getData("home/facebook", svc.id);
                 } else if(svc.provides.indexOf('status/twitter') >= 0) {
-                    getLinks(getEncounterTwitter, locker.lockerBase + '/Me/' + svc.id + '/getCurrent/home_timeline', function() {
-                        getLinks(getEncounterTwitter, locker.lockerBase + '/Me/' + svc.id + '/getCurrent/timeline', function() {
-                            console.error('twitter done!');
-                        });
-                    });
+                    getData("tweets/twitter", svc.id);
+                    getData("timeline/twitter", svc.id);
+                    getData("mentions/twitter", svc.id);
+                } else if(svc.provides.indexOf('checkin/foursquare') >= 0) {
+                    getData("recents/foursquare", svc.id);
+                    getData("checkin/foursquare", svc.id);
                 }
             });
         });
     });
 }
 
-// handle incoming events individually
+// generate unique id for any item based on it's event
+//> u.parse("type://network/context?id=account#46234623456",true);
+//{ protocol: 'type:',
+//  slashes: true,
+//  host: 'network',
+//  hostname: 'network',
+//  href: 'type://network/context?id=account#46234623456',
+//  hash: '#46234623456',
+//  search: '?id=account',
+//  query: { id: 'account' },
+//  pathname: '/context' }
+function getIdr(type, via, data)
+{
+    var r = {slashes:true};
+    r.host = type.substr(type.indexOf('/')+1);
+    r.pathname = type.substr(0, type.indexOf('/'));
+    r.query = {id: via}; // best proxy of account id right now
+    if(r.host === 'twitter')
+    {
+        r.hash = (r.pathname === 'related') ? data.id : data.id_str;
+        r.protocol = 'tweet';
+    }
+    if(r.host === 'facebook')
+    {
+        r.hash = data.id;
+        r.protocol = 'post';
+    }
+    if(r.host === 'foursquare')
+    {
+        r.hash = data.id;
+        r.protocol = 'checkin';
+    }
+    return url.parse(url.format(r)); // make sure it's consistent
+}
+
+// normalize events a bit
 exports.processEvent = function(event, callback)
 {
     if(!callback) callback = function(){};
-    // what a mess
-    var item = (event.obj.data.sourceObject)?event.obj.data.sourceObject:event.obj.data;
-    if(event.type.indexOf("facebook") > 0)
-    {
-        processEncounter(getEncounterFB(item),callback);
-    }
-    if(event.type.indexOf("twitter") > 0)
-    {
-        processEncounter(getEncounterTwitter(item),callback);
-    }
+    var idr = getIdr(event.type, event.via, event.obj.data);
+    masterMaster(idr, event.obj.data, callback);
 }
 
-// used by reIndex to fetch and process each service
-function getLinks(getter, lurl, callback) {
-    request.get({uri:lurl}, function(err, resp, body) {
-        var arr;
-        try{
-            arr = JSON.parse(body);            
-        }catch(E){
-            return callback();
-        }
-        async.forEachSeries(arr,function(a,cb){
-            var e = getter(a);
-            if(!e.text) return cb();
-            processEncounter(e,function(err){if(err) console.log("getLinks error:"+err);});
-            cb(); // run pE() async as it queues
-        },callback);
-    });
-}
-
-function processEncounter(e, cb) 
+// figure out what to do with any data
+function masterMaster(idr, data, callback)
 {
-    encounterQueue.push(e, function(arg){
-        console.error("QUEUE SIZE: "+encounterQueue.length());        
-        cb(arg);
-    });
-    console.error("QUEUE SIZE: "+encounterQueue.length());
+    if(typeof data != 'object') return callback();
+    logger.debug("MM\t"+url.format(idr)+"\t"+typeof data);
+    // look for idr in Items.refs, if found then skip to response processing
+    // compose new idn (network id) from idr+data
+    // look for idn in Items.ids, if found then add idr and skip to response processing
+    // compose new Item, +idr, +response
+    var id = url.format(idr);
+    var item = {at: new Date().getTime(), ids:{}};
+    item.ids[id] = true;
+    dataStore.addItem(item, function(err, doc){
+        logger.debug("ADDED\t"+JSON.stringify(doc));
+        callback();
+    })
 }
-var encounterQueue = async.queue(function(e, callback) {
-    // do all the dirty work to store a new encounter
-    var urls = [];
-    // extract all links
-    util.extractUrls({text:e.text},function(u){ urls.push(u); }, function(err){
-        if(err) return callback(err);
-        // for each one, run linkMagic on em
-        if (urls.length === 0) return callback();
-        async.forEach(urls,function(u,cb){
-            linkMagic(u,function(link){
-                // make sure to pass in a new object, asyncutu
-                dataStore.addEncounter(lutil.extend(true,{orig:u,link:link},e), function(err,doc){
-                    if(err) return cb(err);
-                    dataStore.updateLinkAt(doc.link, doc.at, function() {
-                        search.index(doc.link, function() {
-                            cb()
-                        });
-                    });
-                }); // once resolved, store the encounter
-            });
-        }, callback);
-    });
-}, 5);
 
-// given a raw url, result in a fully stored qualified link (cb's full link url)
-function linkMagic(origUrl, callback){
-    // check if the orig url is in any encounter already (that has a full link url)
-    dataStore.checkUrl(origUrl,function(linkUrl){
-        if(linkUrl) return callback(linkUrl); // short circuit!
-        // new one, expand it to a full one
-        util.expandUrl({url:origUrl},function(u2){linkUrl=u2},function(){
-           // fallback use orig if errrrr
-           if(!linkUrl) {
-               linkUrl = origUrl;
-            }
-           var link = false;
-           // does this full one already have a link stored?
-           dataStore.getLinks({link:linkUrl,limit:1},function(l){link=l},function(err){
-              if(link) {
-                  return callback(link.link); // yeah short circuit dos!
-              }
-              // new link!!!
-              link = {link:linkUrl};
-              util.fetchHTML({url:linkUrl},function(html){link.html = html},function(){
-                  util.extractText(link,function(rtxt){link.title=rtxt.title;link.text = rtxt.text},function(){
-                      util.extractFavicon({url:linkUrl,html:link.html},function(fav){link.favicon=fav},function(){
-                          // *pfew*, callback nausea, sometimes I wonder...
-                          delete link.html; // don't want that stored
-                          if (!link.at) link.at = Date.now();
-                          dataStore.addLink(link,function(){
-                              locker.event("link",link); // let happen independently
-                              callback(link.link); // TODO: handle when it didn't get stored or is empty better, if even needed
-                          });
-                      });
-                  });
-              });
-           });
+// go fetch data from sources to bulk process
+function getData(type, svcId) {
+    var subtype = type.substr(0, type.indexOf('/'));
+    var lurl = locker.lockerBase + '/Me/' + svcId + '/getCurrent/' + subtype;
+    request.get({uri:lurl, json:true}, function(err, resp, arr) {
+        async.forEachSeries(arr,function(a,cb){
+            var idr = getIdr(type, svcId, a);
+            masterMaster(idr, a, cb);
+        },function(err){
+            logger.debug("processed "+arr.length+" items from "+lurl+" "+(err)?err:"");
         });
     });
 }
 
-// TODO split out text we look for links in from text we want to index!
-function getEncounterFB(post)
-{
-    var text = [];
-    if(post.name) text.push(post.name);
-    if(post.message) text.push(post.message);
-    if(post.link) text.push(post.link);
-    if(!post.message && post.caption) text.push(post.caption); // stab my eyes out, wtf facebook
-    // todo: handle comments?
-    var e = {id:post.id
-        , network:"facebook"
-        , text: text.join(" ")
-        , from: post.from.name
-        , fromID: post.from.id
-        , at: post.created_time * 1000
-        , via: post
-        };
-    return e;
-}
-
-function getEncounterTwitter(tweet)
-{
-    var e = {id:tweet.id
-        , network:"twitter"
-        , text: tweet.text + " " + tweet.user.screen_name
-        , from: (tweet.user)?tweet.user.name:""
-        , fromID: (tweet.user)?tweet.user.id:""
-        , at: new Date(tweet.created_at).getTime()
-        , via: tweet
-        };
-    return e;
-}
