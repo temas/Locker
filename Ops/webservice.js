@@ -147,6 +147,8 @@ locker.get("/query/:query", function(req, res) {
                 var options = {};
                 if (query.limit) options.limit = query.limit;
                 if (query.skip) options.skip = query.skip;
+                if (query.fields) options.fields = query.fields;
+                if (query.sort) options.sort = query.sort;
                 collection.find(query.query, options, function(err, foundObjects) {
                     if (err) {
                         res.writeHead(500);
@@ -279,9 +281,17 @@ function proxyRequest(method, req, res) {
         return;
     }
     if(!serviceManager.isInstalled(id)) { // make sure it exists before it can be opened
-        res.writeHead(404);
-        res.end("so sad, couldn't find "+id);
-        return;
+        var map = serviceManager.serviceMap();
+        var match = false;
+        map.available.forEach(function(s){ if(s.handle === id) match = s; });
+        if(!match)
+        {
+            res.writeHead(404);
+            res.end("so sad, couldn't find "+id);
+            return;
+        }
+        console.log("auto-installing "+id);
+        serviceManager.install(match); // magically auto-install!
     }
     if (!serviceManager.isRunning(id)) {
         console.log("Having to spawn " + id);
@@ -425,6 +435,21 @@ locker.all('/dashboard*', function(req, res) {
 
 locker.all('/devdashboard*', function(req, res) {
     proxied(req.method, serviceManager.metaInfo('devdashboard'), req.url.substring(14), req, res);
+});
+
+locker.all("/socket.io*", function(req, res) {
+    if (dashboard && dashboard.instance) proxied(req.method, dashboard.instance, req.url, req, res);
+});
+// proxy websockets
+locker.on('upgrade', function(req, socket, head) {
+    // TODO be selective about who they're routing too?
+    console.log("*************");
+    console.log("********** websocket proxying to dashboard");
+    console.log("*************");
+  proxy.proxyWebSocketRequest(req, socket, head, {
+      host: url.parse(dashboard.instance.uriLocal).hostname,
+      port: url.parse(dashboard.instance.uriLocal).port,
+  });
 });
 
 locker.get('/', function(req, res) {

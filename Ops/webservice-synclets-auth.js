@@ -23,11 +23,15 @@ var syncManager = require('lsyncmanager')
       "endPoint" : "https://accounts.google.com/o/oauth2/token",
       "redirectURI" : "auth/gcontacts/auth",
       "grantType" : "authorization_code"}
+  , gplus = {"provider" : "gplus",
+      "endPoint" : "https://accounts.google.com/o/oauth2/token",
+      "redirectURI" : "auth/gplus/auth",
+      "grantType" : "authorization_code"}
   , apiKeys = {}
   ;
 
 try{
-    apiKeys = JSON.parse(fs.readFileSync(lconfig.lockerDir + "/Config/apikeys.json", 'ascii'))
+    apiKeys = JSON.parse(fs.readFileSync(lconfig.lockerDir + "/Config/apikeys.json", 'utf-8'))
 }catch(e){}
 
 if (lconfig.externalSecure) {
@@ -49,6 +53,9 @@ module.exports = function(locker) {
     });
     locker.get('/auth/gcontacts/auth', function(req, res) {
         handleOAuth2Post(req.param('code'), gcontacts, res);
+    });
+    locker.get('/auth/gplus/auth', function(req, res) {
+        handleOAuth2Post(req.param('code'), gplus, res);
     });
     locker.get('/auth/twitter/auth', function(req, res) {
         handleTwitter(req, res);

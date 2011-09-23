@@ -12,5 +12,12 @@
         "dataDir": "mongodata",
         "host": "localhost",
         "port": 27018
+    },
+    "dashboard" : {
+        "customLogo": "tlp_logo.png",
+        "customFooter": "singly-footer.html",
+        "customTitle": "the locker project",
+        "customLogout": "http://lvh.me:8443/logout",
+        "customHostedEndpoint":"http://lvh.me:8443/users/info"
     }
 }

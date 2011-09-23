@@ -32,7 +32,7 @@ var npm = require('npm');
     var request = require('request');
     var async = require('async');
     var util = require('util');
-    
+
 
     // This lconfig stuff has to come before and other locker modules are loaded!!
     var lconfig = require('lconfig');
@@ -40,7 +40,7 @@ var npm = require('npm');
 
     console.log(process.pid);
     fs.writeFileSync(__dirname + '/Logs/locker.pid', "" + process.pid);
-    
+
     var logger = require("logger");
     var lconsole = require("lconsole");
     var lscheduler = require("lscheduler");
@@ -60,11 +60,6 @@ var npm = require('npm');
     }
     var shuttingDown_ = false;
 
-    if (lconfig.airbrakeKey) {
-        var airbrake = require('airbrake').createClient(lconfig.airbrakeKey);
-        airbrake.handleExceptions();
-    }
-
     var mongoProcess;
     path.exists(lconfig.me + '/' + lconfig.mongo.dataDir, function(exists) {
         if(!exists) {
@@ -77,7 +72,7 @@ var npm = require('npm');
             }
             fs.mkdirSync(lconfig.me + '/' + lconfig.mongo.dataDir, 0755);
         }
-        mongoProcess = spawn('mongod', ['--journal', '--dbpath', lconfig.lockerDir + '/' + lconfig.me + '/' + lconfig.mongo.dataDir,
+        mongoProcess = spawn('mongod', ['--dbpath', lconfig.lockerDir + '/' + lconfig.me + '/' + lconfig.mongo.dataDir,
                                         '--port', lconfig.mongo.port]);
         mongoProcess.stderr.on('data', function(data) {
             console.error('mongod err: ' + data);
@@ -176,7 +171,7 @@ var npm = require('npm');
                     var ret = migrate(lconfig); // prolly needs to be sync and given a callback someday
                     if (ret) {
                         // load new file in case it changed, then save version back out
-                        var curMe = JSON.parse(fs.readFileSync(path.join(lconfig.lockerDir, lconfig.me, "state.json"), 'utf-8'));
+                        var curMe = JSON.parse(fs.readFileSync(path.join(lconfig.lockerDir, lconfig.me, "state.json"), 'utf8'));
                         metaData.version = migrations[i].substring(0, 13);
                         curMe.version = metaData.version;
                         fs.writeFileSync(path.join(lconfig.lockerDir, lconfig.me, "state.json"), JSON.stringify(curMe, null, 4));
@@ -248,6 +243,20 @@ var npm = require('npm');
 
     process.on("SIGTERM", function() {
         shutdown(0);
+    });
+
+    process.on('uncaughtException', function(err) {
+        console.error(util.inspect(err));
+        if(err && err.stack) console.error(util.inspect(err.stack));
+        if (lconfig.airbrakeKey) {
+            var airbrake = require('airbrake').createClient(lconfig.airbrakeKey);
+            airbrake.notify(err, function(err, url) {
+                if(url) console.log(url);
+                shutdown(1);
+            });
+        }else{
+            shutdown(1);
+        }
     });
 
     // Export some things so this can be used by other processes, mainly for the test runner

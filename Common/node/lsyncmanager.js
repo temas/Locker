@@ -58,7 +58,7 @@ exports.findInstalled = function (callback) {
         try {
             if(!fs.statSync(dir).isDirectory()) continue;
             if(!path.existsSync(dir+'/me.json')) continue;
-            var js = JSON.parse(fs.readFileSync(dir+'/me.json', 'utf-8'));
+            var js = JSON.parse(fs.readFileSync(dir+'/me.json', 'utf8'));
             if (js.synclets) {
                 exports.migrate(dir, js);
                 console.log("Loaded synclets for "+js.id);
@@ -239,7 +239,10 @@ function executeSynclet(info, synclet, callback) {
 
     info.syncletToRun = synclet;
     info.syncletToRun.workingDirectory = path.join(lconfig.lockerDir, lconfig.me, info.id);
-    app.stdin.write(JSON.stringify(info)+"\n"); // Send them the process information
+    app.stdin.on('error',function(err){
+        console.error("STDIN error:",err);
+    });
+    app.stdin.write(JSON.stringify(info)+"\n"); // Send them the process information        
     delete info.syncletToRun;
 };
 
@@ -323,21 +326,23 @@ function processData (deleteIDs, info, key, data, callback) {
 }
 
 function deleteData (collection, mongoId, deleteIds, info, eventType, callback) {
-    async.forEach(deleteIds, function(id, cb) {
+    var q = async.queue(function(id, cb) {
         var newEvent = {obj : {source : eventType, type: 'delete', data : {}}};
         newEvent.obj.data[mongoId] = id;
         newEvent.fromService = "synclet/" + info.id;
         levents.fireEvent(eventType, newEvent.fromService, newEvent.obj.type, newEvent.obj);
         datastore.removeObject(collection, id, {timeStampe: Date.now()}, cb);
-    }, callback);
+    }, 5);
+    deleteIds.forEach(q.push);
+    q.drain = callback;
 }
 
 function addData (collection, mongoId, data, info, eventType, callback) {
     var errs = [];
-    async.forEach(data, function(object, cb) {
+    var q = async.queue(function(object, cb) {
         if (object.obj) {
             if(object.obj[mongoId] === null || object.obj[mongoId] === undefined) {
-                console.error('rut roh! no value for primary key!');
+                console.error('rut roh! no value for primary key!: '+JSON.stringify(object.obj));
                 errs.push({"message":"no value for primary key", "obj": object.obj});
                 cb();
                 return;
@@ -356,16 +361,15 @@ function addData (collection, mongoId, data, info, eventType, callback) {
                 });
             }
         }
-    }, function(err) {
-        if (err) {
-            errs.push(err);
-        }
+    }, 5);
+    data.forEach(function(d){ q.push(d, errs.push); }); // hehe fun
+    q.drain = function() {
         if (errs.length > 0) {
             callback(errs);
         } else {
             callback();
         }
-    });
+    };
 }
 
 /**
@@ -401,7 +405,7 @@ exports.migrate = function(installedDir, metaData) {
 * Map a meta data file JSON with a few more fields and make it available
 */
 function mapMetaData(file) {
-    var metaData = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    var metaData = JSON.parse(fs.readFileSync(file, 'utf8'));
     metaData.srcdir = path.dirname(file);
     synclets.available.push(metaData);
     return metaData;
@@ -418,7 +422,7 @@ function addUrls() {
     host += lconfig.externalHost + ":" + lconfig.externalPort + "/";
     if (path.existsSync(path.join(lconfig.lockerDir, "Config", "apikeys.json"))) {
         try {
-            apiKeys = JSON.parse(fs.readFileSync(path.join(lconfig.lockerDir, "Config", "apikeys.json"), 'ascii'));
+            apiKeys = JSON.parse(fs.readFileSync(path.join(lconfig.lockerDir, "Config", "apikeys.json"), 'utf-8'));
         } catch(e) {
             return console.log('Error reading apikeys.json file - ' + e);
         }
@@ -444,6 +448,11 @@ function addUrls() {
                     synclet.authurl = "https://accounts.google.com/o/oauth2/auth?client_id=" + apiKeys.gcontacts.appKey +
                                                     "&redirect_uri=" + host + "auth/gcontacts/auth" +
                                                     "&scope=https://www.google.com/m8/feeds/&response_type=code";
+            } else if (synclet.provider === 'gplus') {
+                if (apiKeys.gplus)
+                    synclet.authurl = "https://accounts.google.com/o/oauth2/auth?client_id=" + apiKeys.gplus.appKey +
+                                                    "&redirect_uri=" + host + "auth/gplus/auth" +
+                                                    "&scope=https://www.googleapis.com/auth/plus.me&response_type=code";
             } else if (synclet.provider === 'github') {
                 if (apiKeys.github)
                     synclet.authurl = "https://github.com/login/oauth/authorize?client_id=" + apiKeys.github.appKey +
