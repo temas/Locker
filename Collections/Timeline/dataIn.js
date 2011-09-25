@@ -69,12 +69,28 @@ function getIdr(type, via, data)
     return url.parse(url.format(r)); // make sure it's consistent
 }
 
+// take an idr and turn it into a generic network-global reference
+// this could be network-specific transformation and need data
+function idr2idn(idr, data)
+{
+    delete idr.query; delete idr.search; // not account specific
+    delete idr.pathname; // ids are generic across any context
+    return url.parse(url.format(idr));
+}
+
 // normalize events a bit
 exports.processEvent = function(event, callback)
 {
     if(!callback) callback = function(){};
     var idr = getIdr(event.type, event.via, event.obj.data);
     masterMaster(idr, event.obj.data, callback);
+}
+
+function isItMe(idr)
+{
+    if(idr.protocol == 'tweet:' && idr.pathname == '/tweets') return true;
+    if(idr.protocol == 'checkin:' && idr.pathname == '/checkin') return true;
+    return false;
 }
 
 // figure out what to do with any data
@@ -89,6 +105,8 @@ function masterMaster(idr, data, callback)
     var id = url.format(idr);
     var item = {at: new Date().getTime(), ids:{}};
     item.ids[id] = true;
+    item.ids[url.format(idr2idn(idr, data))] = true;
+    item.me = isItMe(idr);
     dataStore.addItem(item, function(err, doc){
         logger.debug("ADDED\t"+JSON.stringify(doc));
         callback();
