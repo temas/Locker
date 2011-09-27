@@ -10,5 +10,6 @@
 		,["timeline/twitter","/events"]
 		,["related/twitter","/events"]
 		,["home/facebook","/events"]
+		,["link","/events"]
 		]
 }

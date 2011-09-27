@@ -29,32 +29,32 @@ exports.getTotalResponses = function(callback) {
     respColl.count(callback);
 }
 
-exports.getItemByRefs = function(ref, callback) {
+exports.getItemByKey = function(key, callback) {
     var item;
-    findWrap({refs:ref},0,1,itemCol,function(i){item=i},function(){callback(item)});
-}
-
-exports.getItemByIds = function(id, callback) {
-    var item;
-    findWrap({ids:id},0,1,itemCol,function(i){item=i},function(){callback(item)});
+    findWrap({keys:key},{},itemCol,function(i){item=i},function(){callback(item)});
 }
 
 exports.getItem = function(id, callback) {
     var item;
-    findWrap({id:id},0,1,itemCol,function(i){item=i},function(){callback(item)});
+    findWrap({id:id},{},itemCol,function(i){item=i},function(){callback(item)});
 }
 
-// either gets a single item arg:{id:...} or can paginate all arg:{start:10,limit:10}
+// arg takes sort/limit/offset/find
 exports.getItems = function(arg, cbEach, cbDone) {
-    var f = (arg.id)?{id:arg.id}:{};
+    var f = {};
+    try {
+        f = JSON.parse(arg.find); // optional, can bomb out
+    }catch(E){}
+    delete arg.find;
     findWrap(f,arg,itemCol,cbEach,cbDone);
 }
 
 function findWrap(a,b,c,cbEach,cbDone){
-    console.log("a(" + JSON.stringify(a) + ") b("+ JSON.stringify(b) + ")");
+//    console.log("a(" + JSON.stringify(a) + ") b("+ JSON.stringify(b) + ")");
     var cursor = c.find(a);
     if (b.sort) cursor.sort(b.sort);
     if (b.limit) cursor.limit(b.limit);
+    if (b.offset) cursor.skip(b.offset);
     cursor.each(function(err, item) {
         if (item != null) {
             cbEach(item);
@@ -68,7 +68,7 @@ function findWrap(a,b,c,cbEach,cbDone){
 // insert new (fully normalized) item, generate the id here and now
 exports.addItem = function(item, callback) {
     var hash = crypto.createHash('md5');
-    for(var i in item.ids) hash.update(i);
+    for(var i in item.keys) hash.update(i);
     item.id = hash.digest('hex');
 //    logger.debug("addItem: "+JSON.stringify(item));
     itemCol.findAndModify({"id":item.id}, [['_id','asc']], {$set:item}, {safe:true, upsert:true, new: true}, callback);
