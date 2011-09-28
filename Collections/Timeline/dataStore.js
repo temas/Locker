@@ -31,12 +31,15 @@ exports.getTotalResponses = function(callback) {
 
 exports.getItemByKey = function(key, callback) {
     var item;
-    findWrap({keys:key},{},itemCol,function(i){item=i},function(){callback(item)});
+    var kname = "keys."+key;
+    var find = {};
+    find[kname] = {$exists:true};
+    findWrap(find,{limit:1},itemCol,function(i){item=i},function(err){callback(err,item)});
 }
 
 exports.getItem = function(id, callback) {
     var item;
-    findWrap({id:id},{},itemCol,function(i){item=i},function(){callback(item)});
+    findWrap({id:id},{},itemCol,function(i){item=i},function(err){callback(err,item)});
 }
 
 // arg takes sort/limit/offset/find
@@ -52,9 +55,9 @@ exports.getItems = function(arg, cbEach, cbDone) {
 function findWrap(a,b,c,cbEach,cbDone){
 //    console.log("a(" + JSON.stringify(a) + ") b("+ JSON.stringify(b) + ")");
     var cursor = c.find(a);
-    if (b.sort) cursor.sort(b.sort);
-    if (b.limit) cursor.limit(b.limit);
-    if (b.offset) cursor.skip(b.offset);
+    if (b.sort) cursor.sort(parseInt(b.sort));
+    if (b.limit) cursor.limit(parseInt(b.limit));
+    if (b.offset) cursor.skip(parseInt(b.offset));
     cursor.each(function(err, item) {
         if (item != null) {
             cbEach(item);
