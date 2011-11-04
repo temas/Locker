@@ -51,6 +51,10 @@ ModelCursor.prototype.each = function(cbEach, cbDone) {
 	var self = this;
 	// Build our select query
 	var fields = (this._resultFields && this._resultFields.length > 0) ? this._resultFields.join(",") : "*";
+	// We check which our our joins to include
+	var joinsToUse = fields == "*" ? this.model.joins : this.model.joins.filter(function(join) {
+		
+	});
 	var query = {format:("SELECT " + fields + " FROM " + this.model.name), bindings:[]};
 	this._buildQuery(query);
 	if (_debug) {
@@ -184,6 +188,7 @@ var Model = function(name, spec) {
 	this.name = name;
 	this.spec = spec;
 	this.keys = [];
+	this.joins = [];
 	var self = this;
 	this.ModelEntry = function(row) {
 		this.model = self;
@@ -192,9 +197,7 @@ var Model = function(name, spec) {
 	}
 	this.ModelEntry.prototype.update = function(fields) {
 		for (var k in fields) {
-			console.log("Checking " + k);
 			if (fields.hasOwnProperty(k) && self.spec.hasOwnProperty(k)) {
-				console.log("Updating " + k);
 				this._dirtyFields[k] = fields[k];
 			}
 		}
@@ -232,7 +235,7 @@ var Model = function(name, spec) {
 	function addCallableProp(key) {
 		Object.defineProperty(self.ModelEntry.prototype, key, {
 			get:function() {
-				return spec[key](this, self);
+				return spec[key].type(this, self);
 			}
 		})
 	}
@@ -240,14 +243,14 @@ var Model = function(name, spec) {
 		if (!spec.hasOwnProperty(k)) continue;
 		//console.log("Adding " + k + " to ModelEntry");
 		// We call these indirectly due to the loop closure issue of javascript
-		if (isFunction(spec[k])) {
+		if (spec[k].hasOwnProperty("primaryKey")) {
+			this.keys.push(k);
+		}
+		// This is getting gnarly
+		if (spec[k].hasOwnProperty("join")) {
+			this.joins.push({alias:k, func:spec[k].type});
+		} else if (spec[k].hasOwnProperty("type")) {
 			addCallableProp(k);
-		} else if (isObject(spec[k]) && spec[k].hasOwnProperty("type")) {
-			addBasicProp(k);
-			// Check the other properties for things to do
-			if (spec[k].primaryKey) {
-				this.keys.push(k);
-			}
 		} else {
 			addBasicProp(k);
 		}
@@ -270,67 +273,53 @@ Model.prototype.find = function(expressions) {
 Model.prototype.new = function() {
 	return new this.ModelEntry();
 };
+Model.prototype.clear = function(cbDone) {
+	primaryDB.execute("DELETE FROM " + this.name, function(err, rows) {
+		cbDone(err);
+	});
+};
 Model.prototype.create = function(cbDone) {
 	var checkTableQuery = "SELECT name FROM sqlite_master WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' UNION ALL SELECT name FROM sqlite_temp_master WHERE type IN ('table','view') ORDER BY 1";
+	var self = this;
 	primaryDB.execute(checkTableQuery, function(err, rows) {
-		/*
-		if (rows.length > 0) {
+		if (rows.filter(function(row) { return row.name == self.name; }).length > 0) {
 			if (cbDone) cbDone();
 			return;
 		}
-		*/
-		for (var k in this.spec) {
-			if (!this.spec.hasOwnProperty(k)) continue;
-			var specEntry = this.spec[k];
-			var fields = [];
+		var fields = [];
+		for (var k in self.spec) {
+			if (!self.spec.hasOwnProperty(k)) continue;
+			console.log("Creating key: " + k);
+			console.dir(self.spec[k]);
+			var specEntry = self.spec[k];
+			var field = {name:k};
+			if (typeof(specEntry) == "object" && specEntry.hasOwnProperty("type")) {
+				if (specEntry.hasOwnProperty("primaryKey")) field.primaryKey = specEntry.primaryKey;
+				if (specEntry.hasOwnProperty("autoIncrement")) field.autoIncrement = specEntry.autoIncrement;
+				specEntry = specEntry.type;
+			}
 			// Spec entries are either a direct function or an object with a create member, nothing else
-			if (specEntry.build && isFunction(specEntry.create)) {
-				fields.push(specEntry.create());
+			console.log(specEntry.create);
+			if (isFunction(specEntry.create)) {
+				console.log("Building the type");
+				field.type = specEntry.create();
+				fields.push(field);
 			}
 		}
-		console.log("Create the model table " + fields.join(","));
+		var sql = "CREATE TABLE " + self.name + " (";
+		sql += fields.map(function(entry) { 
+			return "'" + entry.name + "' " + entry.type + (entry.primaryKey ? " PRIMARY KEY" : "") + (entry.autoIncrement ? " AUTOINCREMENT" : "");
+		}).join(",");
+		sql += ")";
+		if (_debug) console.log(sql);
+		primaryDB.execute(sql, function(err, rows) {
+			if (cbDone) cbDone(err);
+		})
 	});
 };
 exports.Model = Model;
 
-/// Core supported types
-Types = {
-	String:{
-		create:function() {
-			return "string";
-		}
-	},
-	Date:{
-		create:function() {
-			return "number";
-		}
-	},
-	Number:{
-		create:function() {
-			return "number";
-		}
-	},
-	Text:{
-		create:function() {
-			return "string";
-		}
-	},
-	PrimaryKey:function(type) {
-		return {
-			create:function() {
-				return type.create() + " PRIMARY KEY";
-			}
-		};
-	},
-	AutoIncrement:function(type) {
-		return {
-			create:function() {
-				return type.create() + " AUTO INCREMENT";
-			}
-		};
-	}
-};
-exports.Types = Types;
+
 
 /// Core operations supported by the expression builder
 //--  A basic comparison between a field and a value
@@ -405,9 +394,9 @@ var InnerJoin = function(entry, parentModel, childModel) {
 		this.entry = proxiedEntry;
 	}
 	util.inherits(this.ProxyEntry, childModel.ModelEntry);
-	this.ProxyEntry.prototype.insert = function(cbDone) {
+	this.ProxyEntry.prototype.save = function(cbDone) {
 		console.log("*** Save it via proxy" + util.inspect(this, true, 3));
-		this.entry.insert(function(err, lastInsertID){
+		this.entry.save(function(err, lastInsertID){
 			if (err) {
 				cbDone(err);
 				return;
@@ -448,8 +437,84 @@ InnerJoin.prototype.new = function() {
 	return new this.ProxyEntry(this.childModel.new());
 };
 //-- Methods to use in your model to do relationships
-exports.hasMany = function(childModel) {
-	return function(entry, parentModel) {
-		return new InnerJoin(entry, parentModel, childModel);
-	}
+exports.hasMany = function(model) {
+	return {
+		create:function() {
+			console.log("should create a hasMany")
+		},
+		type:function(childModel) {
+			return function(entry, parentModel) {
+				return new InnerJoin(entry, parentModel, childModel);
+			}
+		}
+	};
 }
+
+exports.hasOne = function(model)  {
+	if (!model || !model.spec) throw new Error("The child model is not fully defined.");
+	var primaryKey = undefined;
+	Object.keys(model.spec).forEach(function(key) {
+		if (model.spec[key].primaryKey) {
+			primaryKey = key;
+		}
+	});
+	if (!primaryKey) throw new Error("The child model did not have a primary key.");
+	return {
+		type:{
+			create:function() {
+				return model.spec[primaryKey].type.create();
+			}
+			/*
+			function(childModel) {
+			return function(entry, parentModel) {
+				var joinEntry = new childModel.ModelEntry();
+				entry.rows.forEach(function(row) {
+					consosle.dir(row);
+				})
+				return joinEntry;
+			}
+			*/
+		},
+		join:true
+	};
+}
+
+/// Core supported types
+Types = {
+	String:{
+		create:function() {
+			return "text";
+		}
+	},
+	Date:{
+		create:function() {
+			return "integer";
+		}
+	},
+	Number:{
+		create:function() {
+			return "integer";
+		}
+	},
+	Text:{
+		create:function() {
+			return "text";
+		}
+	},
+	PrimaryKey:function(type) {
+		return {
+			create:function() {
+				return type.create() + " PRIMARY KEY";
+			}
+		};
+	},
+	AutoIncrement:function(type) {
+		return {
+			create:function() {
+				return type.create() + " AUTOINCREMENT";
+			}
+		};
+	}
+};
+exports.Types = Types;
+

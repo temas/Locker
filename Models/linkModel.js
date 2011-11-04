@@ -13,10 +13,29 @@ var Encounters = new lsql.Model("Encounters", {
 	via:lsql.Types.String
 });
 
+var Embed = new lsql.Model("Embed", {
+	id:{type:lsql.Types.Number, primaryKey:true, autoIncrement:true},
+	type:lsql.Types.String,
+	version:lsql.Types.String,
+	title:lsql.Types.String,
+	author_name:lsql.Types.String,
+	author_url:lsql.Types.String,
+	provider_name:lsql.Types.String,
+	provider_url:lsql.Types.String,
+	cache_age:lsql.Types.Number,
+	thumbnail_url:lsql.Types.String,
+	thumbnail_width:lsql.Types.Number,
+	thumbnail_height:lsql.Types.Number,
+	url:lsql.Types.String,
+	width:lsql.Types.Number,
+	height:lsql.Types.Number,
+	html:lsql.Types.String
+});
+
 var Links = new lsql.Model("Links", {
 	link:{type:lsql.Types.String, primaryKey:true},
 	at:lsql.Types.Date,
-	embedID:lsql.Types.Number,
+	embed:lsql.hasOne(Embed),
 	favicon:lsql.Types.String,
 	text:lsql.Types.String,
 	title:lsql.Types.String,
@@ -30,3 +49,4 @@ Links.prototype.getWithMostRecentEncounter = function(link) {
 
 exports["Encounters"] = Encounters;
 exports["Links"] = Links;
+exports["Embed"] = Embed;
