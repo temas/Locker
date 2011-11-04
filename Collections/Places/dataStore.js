@@ -9,9 +9,9 @@
 var collection;
 var db;
 var locker;
-var lconfig = require('../../Common/node/lconfig');
+var lconfig;
 var lutil = require('../../Common/node/lutil');
-var logger = require("logger").logger;
+var logger;
 var request = require("request");
 var crypto = require("crypto");
 var async = require("async");
@@ -19,106 +19,143 @@ var url = require("url");
 var fs = require('fs');
 var lmongoutil = require("lmongoutil");
 
-function processFoursquare(svcId, data, cb) {
+function processFoursquare(svcId, type, data, cb) {
     // Gotta have lat/lng/at at minimum
-    if (!data.venue || !data.venue.location || !data.venue.location.lat || !data.venue.location.lng || !data.createdAt) {
-        cb("The 4sq data did not have lat/lng or at");
+    var loc = (data.venue) ? data.venue.location : data.location; // venueless happens
+    if (!loc || !loc.lat || !loc.lng || !data.createdAt) {
+        cb("The 4sq data did not have lat/lng or at: "+JSON.stringify(data));
         return;
     }
-    
-    var me = data.me;
-    delete data.me;
-    console.log('4SQ! ');
-    
+
+    var me = false;
+    if (type === 'checkin/foursquare') {
+        me = true;
+    }
+
     var placeInfo = {
-            id:data.id,
             me:me,
             network:"foursquare",
-            title: data.venue.name,
-            stream: false,
-            lat: data.venue.location.lat,
-            lng: data.venue.location.lng,
+            path: false,
+            title: (data.venue) ? data.venue.name : data.location.name,
+            from: '',
+            lat: loc.lat,
+            lng: loc.lng,
             at: data.createdAt * 1000,
-            via: data
+            via: '/Me/' + svcId + '/' + type.split('/')[0] + '/id/' + data._id
         };
+
     // "checkins" are from yourself, kinda problematic to deal with here?
     if (data.user) {
         placeInfo.fromID = data.user.id;
-        placeInfo.from = data.user.firstName + " " + data.user.lastName;
+        placeInfo.from = '';
+        if (data !== null && data.hasOwnProperty('user') && data.user.hasOwnProperty('firstName')) {
+            placeInfo.from += data.user.firstName.replace(/^\w/, function($0) { return $0.toUpperCase(); });
+        }
+        if (data !== null && data.hasOwnProperty('user') && data.user.hasOwnProperty('lastName')) {
+            placeInfo.from += ' ' + data.user.lastName.replace(/^\w/, function($0) { return $0.toUpperCase(); });
+        }
+    } else if (!data.user && me === true) {
+        placeInfo.from = 'Me';
     }
-    placeInfo.sources = [{service:svcId, id:data.id, data:data}];
     saveCommonPlace(placeInfo, cb);
 }
 
-function processTwitter(svcId, data, cb) {
-    // Gotta have geo/at at minimum    
+function processTwitter(svcId, type, data, cb) {
+    // Gotta have geo/at at minimum
     if (!data.created_at) {
         cb("The Twitter data did not have created_at");
         return;
     }
-    
-    var ll = firstLL(data.geo);
-    if (!ll) {
-        ll = firstLL(data.place, true);
+
+    var title = '';
+    if (data !== null && data.hasOwnProperty('place') && data.place !== null && data.place.hasOwnProperty('full_name')) {
+        title = data.place.full_name.replace(/\n/g,'').replace(/\s+/g, ' ').replace(/^\w/, function($0) { return $0.toUpperCase(); });
     }
-    if (!ll) {
-        ll = firstLL(data.coordinates, true);
-    }
+
+    var ll = firstLL(data.geo) || firstLL(data.coordinates, true) ||
+        (data.place !== null && data.place.hasOwnProperty('bounding_box') && computedLL(data.place.bounding_box.coordinates[0]));
     if (!ll) {
         // quietly return, as lots of tweets aren't geotagged, so let's just bail
-        cb(); 
-        return;
+        return cb();
     }
-    
-    var me = data.me;
-    delete data.me;
-    
+
+    var me = false;
+    if (type === 'tweets/twitter') {
+        me = true;
+    }
+
     var placeInfo = {
-            id:data.id,
             me:me,
             lat: ll[0],
             lng: ll[1],
-            stream: false,
+            path: false,
+            title: title,
             network:"twitter",
             text: data.text,
-            from: (data.user)?data.user.name:"",
+            from: (data.user)?data.user.name.replace(/^\w/, function($0) { return $0.toUpperCase(); }):"",
             fromID: (data.user)?data.user.id:"",
             at: new Date(data.created_at).getTime(),
-            via: data
+            via: '/Me/' + svcId + '/' + type.split('/')[0] + '/id/'+data._id
         };
-
-    placeInfo.sources = [{service:svcId, id:data.id, data:data}];
     saveCommonPlace(placeInfo, cb);
 }
 
-function processGLatitude(svcId, data, cb) {
+function processInstagram(svcId, type, data, cb) {
+    // Gotta have location/at at minimum
+    if (!data || !data.created_time || !data.location || !data.location.latitude || !data.location.longitude) {
+        cb();
+        return;
+    }
+
+    var me = false;
+    if (type === 'photo/instagram') {
+        me = true; // I think this is probably getting overwritten, fix the right way when we do profiles uniformly
+    }
+
+    var placeInfo = {
+            me:me,
+            lat: data.location.latitude,
+            lng: data.location.longitude,
+            path: false,
+            title: (data.caption && data.caption.text) ? data.caption.text : '',
+            network:"instagram",
+            from: (data.user)?data.user.full_name:"",
+            fromID: (data.user)?data.user.id:"",
+            at: data.created_time * 1000,
+            via: '/Me/' + svcId + '/' + type.split('/')[0] + '/id/'+data._id
+        };
+    saveCommonPlace(placeInfo, cb);
+}
+
+function processGLatitude(svcId, type, data, cb) {
     // Gotta have lat/lng/at at minimum
     if (!data.latitude || !data.longitude) {
         cb("The Latitude data did not have latitude or longitude");
         return;
     }
-    
+
     var timestamp = parseInt(data.timestampMs, 10);
     if (isNaN(timestamp)) {
         cb("The Latitude data did not have a valid timestamp");
-        return; 
+        return;
     }
-    
-    var me = data.me;
-    delete data.me;
-    
+
+    var me = false;
+    if (type === 'location/glatitude') {
+        me = true;
+    }
+
     var placeInfo = {
-            id:data.timestampMs,
             me:me,
             network:"glatitude",
-            stream: true,
+            path: true,
+            title: '',
+            from: 'Me',
             lat: data.latitude,
             lng: data.longitude,
             at: timestamp,
-            via: data
+            via: '/Me/' + svcId + '/' + type.split('/')[0] + '/id/'+data._id
         };
-        
-    placeInfo.sources = [{service:svcId, id:data.id, data:data}];
     saveCommonPlace(placeInfo, cb);
 }
 
@@ -129,26 +166,24 @@ function updateState() {
     }
     writeTimer = setTimeout(function() {
         try {
-            lutil.atomicWriteFileSync("state.json", JSON.stringify({updated:new Date().getTime()}));
+            lutil.atomicWriteFileSync("state.json", JSON.stringify({updated:Date.now()}));
         } catch (E) {}
     }, 5000);
 }
 
 function saveCommonPlace(placeInfo, cb) {
+    placeInfo.lat = +(placeInfo.lat.toFixed(5));
+    placeInfo.lng = +(placeInfo.lng.toFixed(5));
     var hash = createId(placeInfo.lat+':'+placeInfo.lng+':'+placeInfo.at);
     var query = [{id:hash}];
-    
-    if (!placeInfo.id) {
-        placeInfo.id = hash;
-    }
+    placeInfo.id = hash;
     collection.findAndModify({$or:query}, [['_id','asc']], {$set:placeInfo}, {safe:true, upsert:true, new: true}, function(err, doc) {
-        if (!err) {
-            updateState();
-            var eventObj = {source: "places", type: "place", data:doc};
-            locker.event("place", eventObj);
-            return cb(undefined, eventObj);
+        if (err) {
+            return cb(err);
         }
-        cb(err);
+        updateState();
+        locker.ievent(lutil.idrNew("place","places",doc.id), doc);
+        return cb(undefined, doc);
     });
 }
 
@@ -158,13 +193,16 @@ dataHandlers["recents/foursquare"] = processFoursquare;
 dataHandlers["tweets/twitter"] = processTwitter;
 dataHandlers["timeline/twitter"] = processTwitter;
 dataHandlers["location/glatitude"] = processGLatitude;
+dataHandlers["photo/instagram"] = processInstagram;
+dataHandlers["feed/instagram"] = processInstagram;
 
-exports.init = function(mongoCollection, mongo, l) {
-    logger.debug("dataStore init mongoCollection(" + mongoCollection + ")");
+exports.init = function(mongoCollection, mongo, l, config) {
     collection = mongoCollection;
+    collection.ensureIndex({"id":1},{unique:true},function() {});
     db = mongo.dbClient;
-    lconfig.load('../../Config/config.json'); // ugh
     locker = l;
+    lconfig = config;
+    logger = require("logger");
 };
 
 exports.getTotalCount = function(callback) {
@@ -176,7 +214,12 @@ exports.getAll = function(fields, callback) {
 };
 
 exports.get = function(id, callback) {
-    collection.findOne({_id: new db.bson_serializer.ObjectID(id)}, callback);
+    var or = []
+    try {
+        or.push({_id:new db.bson_serializer.ObjectID(id)});
+    }catch(E){}
+    or.push({id:id});
+    collection.findOne({$or:or}, callback);
 };
 
 exports.getOne = function(id, callback) {
@@ -200,19 +243,43 @@ exports.addEvent = function(eventBody, callback) {
         return;
     }
     // Run the data processing
-    var data = (eventBody.obj.data) ? eventBody.obj.data : eventBody.obj;
-    var handler = dataHandlers[eventBody.type] || processShared;
-    handler(eventBody.via, data, callback);
+    var idr = url.parse(eventBody.idr, true);
+    var svcId = idr.query["id"];
+    var type = idr.pathname.substr(1) + '/' + idr.host
+    var handler = dataHandlers[type];
+    if(!handler)
+    {
+        logger.error("unhandled "+type);
+        return callback();
+    }
+    handler(svcId, type, eventBody.data, callback);
 };
 
 exports.addData = function(svcId, type, allData, callback) {
     if (callback === undefined) {
         callback = function() {};
     }
-    var handler = dataHandlers[type] || processShared;
+    var handler = dataHandlers[type];
+    if(!handler)
+    {
+        logger.error("unhandled "+type);
+        return callback();
+    }
+    // if called with just one item, streaming
+    if(!Array.isArray(allData))
+    {
+        handler(svcId, type, allData, function(e){
+            if(e) logger.error("error processing: "+e);
+            callback();
+        });
+        return;
+    }
     async.forEachSeries(allData, function(data, cb) {
-        handler(svcId, data, cb);
-    },callback);
+        handler(svcId, type, data, function(e){
+            if(e) logger.error("error processing: "+e);
+            cb();
+        });
+    }, callback);
 };
 
 exports.clear = function(callback) {
@@ -253,8 +320,8 @@ function findWrap(a,b,c,cbEach,cbDone) {
 }
 
 // hack to inspect until we find any [123,456]
-function firstLL(o,reversed) {
-    if (Array.isArray(o) && o.length == 2 && 
+function firstLL(o, reversed) {
+    if (Array.isArray(o) && o.length == 2 &&
         typeof o[0] == 'number' && typeof o[1] == 'number') {
         return (reversed) ? [o[1],o[0]] : o; // reverse them optionally
     }
@@ -262,8 +329,23 @@ function firstLL(o,reversed) {
         return null;
     }
     for (var i in o) {
-        var ret = firstLL(o[i]);
+        var ret = firstLL(o[i], reversed);
         if(ret) return ret;
     }
     return null;
+}
+
+// Find center of bounding boxed LL array
+function computedLL(box) {
+    var allLat = 0;
+    var allLng = 0;
+
+    for (var i=0; i<box.length; ++i) {
+        allLat += box[i][1];
+        allLng += box[i][0];
+    }
+    var lat = +(allLat / 4).toFixed(5);
+    var lng = +(allLng / 4).toFixed(5);
+
+    return [lat, lng];
 }
