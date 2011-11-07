@@ -89,7 +89,7 @@ exports.handleGetUpdate = function(callback) {
 
         reindexType(lockerInfo.lockerUrl + '/Me/contacts/?all=true', 'contact/full', 'contacts', function(err) {});
         reindexType(lockerInfo.lockerUrl + '/Me/photos/?all=true', 'photo/full', 'photos', function(err) {});
-        reindexType(lockerInfo.lockerUrl + '/Me/places/?all=true', 'place/full', 'places', function(err) {});
+        reindexType(lockerInfo.lockerUrl + '/Me/places/?all=true', 'place', 'places', function(err) {});
         locker.providers('timeline/twitter', function(err, services) {
             if (!services) return;
             services.forEach(function(svc) {
@@ -105,7 +105,7 @@ exports.handleGetUpdate = function(callback) {
 
 exports.handlePostEvents = function(req, callback) {
     var error;
-    
+
     if (req.headers['content-type'] !== 'application/json') {
         error = 'Expected content-type of "application/json" for /search/events POST request. Received content-type: ' + req.headers['content-type'];
         console.error(error);
@@ -260,8 +260,8 @@ exports.handleGetReindexForType = function(type, callback) {
     else if (type === 'photo/full') {
         reindexType(lockerInfo.lockerUrl + '/Me/photos/?all=true', 'photo/full', 'photos', function(err) {});
     }
-    else if (type === 'place/full') {
-        reindexType(lockerInfo.lockerUrl + '/Me/places/?all=true', 'place/full', 'places', function(err) {});
+    else if (type === 'place') {
+        reindexType(lockerInfo.lockerUrl + '/Me/places/?all=true', 'place', 'places', function(err) {});
     }
     else {
         locker.providers(type, function(err, services) {
@@ -387,7 +387,7 @@ function getSourceForEvent(body) {
     // FIXME: This is a bad hack to deal with the tech debt we have around service type naming and eventing inconsistencies
     var source;
 
-    if (body.type == 'contact/full' || body.type == 'photo/full' || body.type == 'place/full') {
+    if (body.type == 'contact/full' || body.type == 'photo/full') {
        var splitType = body.type.split('/');
        source = splitType[0] + 's';
     } else {
