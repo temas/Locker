@@ -59,6 +59,8 @@ var locker = express.createServer(
 var push = require('./webservice-push')(locker);
 var synclets = require('./webservice-synclets')(locker);
 var syncletAuth = require('./webservice-synclets-auth')(locker);
+var registry = require('./registry');
+registry.app(locker); // add it's endpoints
 
 var listeners = new Object(); // listeners for events
 
@@ -557,7 +559,7 @@ exports.startService = function(port, cb) {
         serviceManager.install(serviceManager.getFromAvailable(lconfig.ui));
     locker.listen(port, function() {
         serviceManager.spawn(lconfig.ui, function() {
-            cb();
+            registry.init(lconfig, lcrypto, cb);
             dashboard = {instance: serviceManager.metaInfo(lconfig.ui)};
             console.log('ui spawned');
         });
