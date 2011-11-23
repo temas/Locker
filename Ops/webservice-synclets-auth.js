@@ -116,7 +116,7 @@ function handleOAuth2Post (code, options, res) {
             }
             auth.token = JSON.parse(body);
             installSynclet(options.provider, auth);
-            res.end("<script type='text/javascript'> window.close(); </script>");
+            res.end("<script type='text/javascript'>  window.opener.installed('" + options.provider + "'); window.close(); </script>");
         });
 
     } catch (E) {
@@ -136,7 +136,7 @@ function handleTwitter (req, res) {
                 auth.consumerSecret = apiKeys.twitter.appSecret;
                 auth.token = newToken;
                 installSynclet("twitter", auth);
-                res.end("<script type='text/javascript'> window.close(); </script>");
+                res.end("<script type='text/javascript'> window.opener.installed('twitter'); window.close(); </script>");
             });
     } catch (E) {
         console.error("auth error: "+E);
@@ -155,7 +155,7 @@ function handleTumblr (req, res) {
                 auth.consumerSecret = apiKeys.tumblr.appSecret;
                 auth.token = newToken;
                 installSynclet("tumblr", auth);
-                res.end("<script type='text/javascript'> window.close(); </script>");
+                res.end("<script type='text/javascript'> window.opener.installed('tumblr');  window.close(); </script>");
             });
     } catch (E) {
         console.error("auth error: "+E);
@@ -174,7 +174,7 @@ function handleFlickr (req, res) {
             auth.apiSecret = apiKeys.flickr.appSecret;
             auth.token = auth.token;
             installSynclet("flickr", auth);
-            res.end("<script type='text/javascript'> window.close(); </script>");
+            res.end("<script type='text/javascript'> window.opener.installed('flickr');  window.close(); </script>");
         });
     }
 }
