@@ -510,6 +510,11 @@ locker.post('/core/:svcId/event', function(req, res) {
     res.end("OKTHXBI");
 });
 
+locker.get('/wildmode', function(req, res) {
+    lconfig.ui = 'dashboardv3';
+    res.redirect('/');
+});
+
 locker.use(express.static(__dirname + '/static'));
 
 // fallback everything to the dashboard
