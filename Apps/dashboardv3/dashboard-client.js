@@ -42,6 +42,29 @@ app.configure(function() {
     app.use(express.static(__dirname + '/static'));
 });
 
+app.all('*', function(req, res, next) {
+    // hackzzzzzzzzzzzzzzzzz
+    // will replace when we have a reasonable notion of a user's profile
+    request.get({url:locker.lockerBase + "/synclets/facebook/get_profile"}, function(error, res, body) {
+        try {
+            var body = JSON.parse(body);
+            if (body.username) {
+                profileImage = "http://graph.facebook.com/" + body.username + "/picture";
+            }
+        } catch (E) {}
+    });
+    request.get({url:locker.lockerBase + "/synclets/github/get_profile"}, function(err, res, body) {
+        try {
+            var body = JSON.parse(body);
+            if (body.login) {
+                githubLogin = body.login;
+            }
+        } catch (E) {}
+    });
+    next();
+});
+
+
 var clickApp = function(req, res) {
     var clickedApp = req.params.app;
     if (clickedApp) {
