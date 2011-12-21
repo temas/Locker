@@ -1,6 +1,7 @@
 var util = require("util");
 var sqlite = require("sqlite");
 var events = require("events");
+var async = require("async");
 var _debug = true;
 
 //TODO:  Support for multiple sqlite DBs and using attach to queries
@@ -50,12 +51,18 @@ ModelCursor.prototype.each = function(cbEach, cbDone) {
 	//console.log("In each for " + this.model.name);
 	var self = this;
 	// Build our select query
-	var fields = (this._resultFields && this._resultFields.length > 0) ? this._resultFields.join(",") : "*";
+	var fields = (this._resultFields && this._resultFields.length > 0) ? this._resultFields.map(function(f) { return self.model.name + "." + f; }).join(",") : "*";
 	// We check which our our joins to include
-	var joinsToUse = fields == "*" ? this.model.joins : this.model.joins.filter(function(join) {
-		
+	this._joins = fields == "*" ? this.model.joins : this.model.joins.filter(function(join) {
+        self._resultFields.forEach(function(field) {
+            var ptIndex = field.indexOf(".");
+            if (ptIndex > 0 && join.name == field.substr(0, ptIndex)) {
+                return true;
+            }
+            return false;
+        });
 	});
-	var query = {format:("SELECT " + fields + " FROM " + this.model.name), bindings:[]};
+	var query = {rootTable:this.model.name, format:("SELECT " + fields + " FROM " + this.model.name), bindings:[]};
 	this._buildQuery(query);
 	if (_debug) {
 		console.log("Query: " + query.format);
@@ -159,9 +166,8 @@ ModelCursor.prototype._basicQuery = function(query, cbDone) {
 };
 ModelCursor.prototype._buildQuery = function(query) {
 	// TODO: Only accepts 1 joined table right now 
-	if (this._joins) {
-		this._joins.build(query);
-	}
+    this._joins.forEach(function(join) { join.func.build(query, join.alias); });
+    
 	// The where clause
 	query.format += " WHERE ";
 	var where = isFunction(this._query) ? this.query.build(query) : Ops.and(this._query).build(query);
@@ -171,7 +177,7 @@ ModelCursor.prototype._buildQuery = function(query) {
 		for (var k in this._sort) {
 			if (this._sort.hasOwnProperty(k)) {
 				if (hasFirst) query.format += ","
-				query.format += k + (this._sort[k] > 1 ? " ASC" : " DESC");
+				query.format += this.model.name + "." + k + (this._sort[k] > 1 ? " ASC" : " DESC");
 			}
 		}
 	}
@@ -211,16 +217,32 @@ var Model = function(name, spec) {
 		cursor.insert(this, cbDone);
 	};
 	this.ModelEntry.prototype.save = function(cbDone) {
-		var cursor = new ModelCursor(self);
-		if (this.row === undefined) {
-			return cursor.insert(this, cbDone);
-		} else {
-			return cursor.update(this, cbDone);
-		}
+		var entry = this;
+		async.forEach(self.joins, function(join, cb) {
+			if (join.func.preSave) join.func.preSave(entry, entry[join.alias], cb);
+		}, function(err) {
+			var cursor = new ModelCursor(self);
+			var func = entry.row === undefined ? "insert" : "update";
+			cursor[func](entry, function(err, id) {
+				async.forEach(self.joins, function(join, cb) {
+					if (join.func.postSave) {
+                        join.func.postSave(entry, entry[join.alias], cb);
+                    } else {
+                        cb();
+                    }
+				}, function() {
+					console.log("HERE WE ARE (" + id + ")" + util.inspect(entry))
+					cbDone(err, id);
+				})
+			})
+		});
 	}
 	function addBasicProp(key) {
+		console.log("Add basic for " + key);
 		Object.defineProperty(self.ModelEntry.prototype, key, {
+			
 			get:function() {
+				console.log("Basic get for " + key);
 				if (this._dirtyFields.hasOwnProperty(key)) {
 					return this._dirtyFields[key];
 				} else {
@@ -233,8 +255,10 @@ var Model = function(name, spec) {
 		});
 	}
 	function addCallableProp(key) {
+		console.log("Add extended for " + key)
 		Object.defineProperty(self.ModelEntry.prototype, key, {
 			get:function() {
+				console.log("function get for " + key);
 				return spec[key].type(this, self);
 			}
 		})
@@ -257,6 +281,9 @@ var Model = function(name, spec) {
 	}
 	// TODO: Process the spec into this.fields
 }
+Model.prototype.getSpecType = function(key) {
+	
+};
 Model.prototype.count = function(cb) {
 	primaryDB.execute("SELECT COUNT(*) AS count FROM " + this.name, function(err, rows) {
 		if (err || !rows || rows.length < 1) {
@@ -271,9 +298,16 @@ Model.prototype.find = function(expressions) {
 	return cursor;
 };
 Model.prototype.new = function() {
-	return new this.ModelEntry();
+	var ret = new this.ModelEntry();
+	this.joins.forEach(function(join) {
+		ret[join.alias] = join.func.new();
+	});
+	return ret;
 };
 Model.prototype.clear = function(cbDone) {
+    if (_debug) {
+        console.log("DELETE FROM " + this.name);
+    }
 	primaryDB.execute("DELETE FROM " + this.name, function(err, rows) {
 		cbDone(err);
 	});
@@ -289,8 +323,7 @@ Model.prototype.create = function(cbDone) {
 		var fields = [];
 		for (var k in self.spec) {
 			if (!self.spec.hasOwnProperty(k)) continue;
-			console.log("Creating key: " + k);
-			console.dir(self.spec[k]);
+			//console.log("Creating key: " + k);
 			var specEntry = self.spec[k];
 			var field = {name:k};
 			if (typeof(specEntry) == "object" && specEntry.hasOwnProperty("type")) {
@@ -299,10 +332,9 @@ Model.prototype.create = function(cbDone) {
 				specEntry = specEntry.type;
 			}
 			// Spec entries are either a direct function or an object with a create member, nothing else
-			console.log(specEntry.create);
 			if (isFunction(specEntry.create)) {
-				console.log("Building the type");
-				field.type = specEntry.create();
+				//console.log("Building the type");
+				specEntry.create(field);
 				fields.push(field);
 			}
 		}
@@ -350,6 +382,7 @@ BooleanOp.prototype.build = function(query) {
 			query.format += x;
 			expression.build.call(this, query);
 		} else {
+            if (x.indexOf(".") < 0) x = query.rootTable + "." + x;
 			query.format += x + " = ?";
 			query.bindings.push(expression);
 		}
@@ -382,7 +415,7 @@ Ops = {
 exports.Ops = Ops;
 
 /************************************************************************************
-/ Joins are so awesome
+/ Joins are so awesome...
 */
 var InnerJoin = function(entry, parentModel, childModel) {
 	this.entry = entry;
@@ -436,12 +469,12 @@ InnerJoin.prototype.find = function(query) {
 InnerJoin.prototype.new = function() {
 	return new this.ProxyEntry(this.childModel.new());
 };
+InnerJoin.prototype.create = function() {
+    console.log("should create a hasMany");
+};
 //-- Methods to use in your model to do relationships
 exports.hasMany = function(model) {
 	return {
-		create:function() {
-			console.log("should create a hasMany")
-		},
 		type:function(childModel) {
 			return function(entry, parentModel) {
 				return new InnerJoin(entry, parentModel, childModel);
@@ -459,21 +492,26 @@ exports.hasOne = function(model)  {
 		}
 	});
 	if (!primaryKey) throw new Error("The child model did not have a primary key.");
+    var self = this;
 	return {
 		type:{
-			create:function() {
-				return model.spec[primaryKey].type.create();
-			}
-			/*
-			function(childModel) {
-			return function(entry, parentModel) {
-				var joinEntry = new childModel.ModelEntry();
-				entry.rows.forEach(function(row) {
-					consosle.dir(row);
+            build:function(query, alias) {
+                query.format += " LEFT JOIN " + model.name + " AS " + alias + " ON " + query.rootTable + "._" + model.name + "_id = " + alias + "._id ";
+            },
+			create:function(field) {
+				field.name = "_" + model.name + "_id";
+				model.spec[primaryKey].type.create(field);
+			},
+			new:function() {
+				return model.new();
+			},
+			preSave:function(joinCursor, parentCursor, callback) {
+				parentCursor.save(function(err, id) {
+					// TODO: This is a bit of a hack, it forces it into the updated fields.  Maybe consider a more complete mechanism
+					joinCursor._dirtyFields["_" + model.name + "_id"] = id;
+					callback();
 				})
-				return joinEntry;
 			}
-			*/
 		},
 		join:true
 	};
@@ -482,36 +520,38 @@ exports.hasOne = function(model)  {
 /// Core supported types
 Types = {
 	String:{
-		create:function() {
-			return "text";
+		create:function(field) {
+			field.type = "text";
 		}
 	},
 	Date:{
-		create:function() {
-			return "integer";
+		create:function(field) {
+			field.type = "integer";
 		}
 	},
 	Number:{
-		create:function() {
-			return "integer";
+		create:function(field) {
+			field.type = "integer";
 		}
 	},
 	Text:{
-		create:function() {
-			return "text";
+		create:function(field) {
+			field.type = "text";
 		}
 	},
 	PrimaryKey:function(type) {
 		return {
-			create:function() {
-				return type.create() + " PRIMARY KEY";
+			create:function(field) {
+				type.create(field);
+				field.type = field.type + " PRIMARY KEY";
 			}
 		};
 	},
 	AutoIncrement:function(type) {
 		return {
-			create:function() {
-				return type.create() + " AUTOINCREMENT";
+			create:function(field) {
+				type.create(field);
+				field.type = field.type + " AUTOINCREMENT";
 			}
 		};
 	}

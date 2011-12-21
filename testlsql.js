@@ -1,11 +1,16 @@
 var lsql = require("./Common/node/lsql");
 //var models = require("./Models/linkModel.js");
 var async = require("async");
+var util = require("util");
 
 var extendedM = new lsql.Model("Extended", {
 	_id:{type:lsql.Types.Number, autoIncrement:true, primaryKey:true},
 	foo:lsql.Types.String,
 	bar:lsql.Types.Number
+});
+var anotherM = new lsql.Model("Another", {
+    _id:{type:lsql.Types.Number, autoIncrement:true, primaryKey:true},
+    rand:lsql.Types.String
 });
 var basicM = new lsql.Model("Basic", {
 	_id:{type:lsql.Types.Number, autoIncrement:true, primaryKey:true},
@@ -14,6 +19,7 @@ var basicM = new lsql.Model("Basic", {
 
 //var m = new lsql.Model("testing", {"id":lsql.Types.String, "encounters":lsql.hasMany(new lsql.Model("testing2"))});
 //var m = models.Links;
+var fieldId = 0;
 lsql.connectToDB("./testing.sqlite", function(err) {
 	async.series([
 		function(cb) {
@@ -25,7 +31,29 @@ lsql.connectToDB("./testing.sqlite", function(err) {
 			extendedM.clear(function(err) {
 				basicM.clear(cb);
 			})
-		}
+		},
+		function(cb) {
+			var entry = basicM.new();
+			entry.extended.foo = "testing";
+			entry.extended.bar = 5;
+			entry.save(function(err, id){
+                fieldId = id;
+                console.log("Done: " + util.inspect(arguments));
+				cb();
+			});
+		},
+		function(cb) {
+			basicM.find({_id:fieldId}).one(function(entry) {
+				console.log("Basic query: " + util.inspect(entry));
+				cb();
+			});
+		},
+        function(cb) {
+            basicM.find({"extended.bar":5}).one(function(entry) {
+                console.log("Extended sub query: " + util.inspect(entry));
+                cb();
+            });
+        }
 	]);
 	/*
 	async.series([
