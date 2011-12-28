@@ -23,6 +23,9 @@
     "mongoId" : {
         "photos": "photoID"
     },
+    "types" : {
+        "recents":"checkin"
+    },
     "provides": [
         "contact/foursquare",
         "profile/foursquare",
