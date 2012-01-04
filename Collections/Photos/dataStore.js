@@ -252,6 +252,10 @@ function createId(url, name) {
     return sha1.digest("hex");
 }
 
+function doNothing(svcId, data, cb) {
+    cb();
+}
+
 
 var dataHandlers = {};
 dataHandlers["timeline/twitter"] = processTwitter;
@@ -261,6 +265,7 @@ dataHandlers["photo/twitpic"] = processTwitPic;
 dataHandlers["photo/facebook"] = processFacebook;
 dataHandlers["photo/flickr"] = processFlickr;
 dataHandlers["photo/instagram"] = processInstagram;
+dataHandlers["feed/instagram"] = doNothing;
 
 exports.init = function(mongoCollection, mongo, l) {
     logger.debug("dataStore init mongoCollection(" + mongoCollection + ")");
